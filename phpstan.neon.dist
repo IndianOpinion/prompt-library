@@ -1,0 +1,16 @@
+parameters:
+    level: 6
+    phpVersion: 80100
+    paths:
+        - src
+        - prompt-library.php
+        - uninstall.php
+        - bootstrap.php
+    bootstrapFiles:
+        - vendor/php-stubs/wordpress-stubs/wordpress-stubs.php
+        - vendor/php-stubs/wp-cli-stubs/wp-cli-stubs.php
+        - tests/phpstan-constants.php
+    treatPhpDocTypesAsCertain: false
+    ignoreErrors:
+        -
+            identifier: requireOnce.fileNotFound
