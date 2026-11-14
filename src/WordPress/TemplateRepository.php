@@ -27,8 +27,8 @@ class TemplateRepository
     {
         $key = 't:' . $slug;
         $cached = wp_cache_get($key, self::CACHE_GROUP);
-        if (is_array($cached)) {
-            return $cached['id'] === 0 ? null : $cached;
+        if (is_array($cached) && isset($cached['id'])) {
+            return (int) $cached['id'] === 0 ? null : ['id' => (int) $cached['id'], 'status' => (string) ($cached['status'] ?? ''), 'live' => (int) ($cached['live'] ?? 0)];
         }
         global $wpdb;
         $row = $wpdb->get_row($wpdb->prepare(

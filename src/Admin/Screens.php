@@ -723,7 +723,7 @@ final class Screens
             printf('<div class="notice notice-error"><p>%s</p></div>', esc_html((string) $state['error']));
         }
         if (isset($state['issues']) && is_array($state['issues'])) {
-            echo '<div class="notice notice-error"><p>' . esc_html__('Not saved:', 'prompt-library') . '</p>' . Admin::issuesList($state['issues']) . '</div>'; // phpcs:ignore WordPress.Security.EscapeOutput -- built with esc_html.
+            echo '<div class="notice notice-error"><p>' . esc_html__('Not saved:', 'prompt-library') . '</p>' . Admin::issuesList(array_values(array_filter($state['issues'], static fn ($i): bool => $i instanceof Issue))) . '</div>'; // phpcs:ignore WordPress.Security.EscapeOutput -- built with esc_html.
         }
     }
 }

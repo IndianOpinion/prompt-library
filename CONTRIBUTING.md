@@ -21,7 +21,7 @@ statements by the marker comment each one carries.
 
 ```sh
 composer test   # PHPUnit
-composer stan   # PHPStan, level 6, with WordPress stubs
+composer stan   # PHPStan, level 8, with WordPress stubs
 composer cs     # PHP_CodeSniffer, PSR-12
 composer check  # all three
 ```

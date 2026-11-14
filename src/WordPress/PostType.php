@@ -104,7 +104,7 @@ final class PostType
             return $caps;
         }
         $post = get_post((int) $args[0]);
-        if ($post === null || $post->post_type !== self::NAME) {
+        if (!$post instanceof \WP_Post || $post->post_type !== self::NAME) {
             return $caps;
         }
 
