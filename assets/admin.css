@@ -1,0 +1,35 @@
+.promptlib .promptlib-mono,
+.promptlib .promptlib-text,
+.promptlib .promptlib-diff {
+    font-family: Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 13px;
+}
+.promptlib .promptlib-text,
+.promptlib .promptlib-diff {
+    white-space: pre-wrap;
+    word-break: break-word;
+    background: #f6f7f7;
+    border: 1px solid #dcdcde;
+    padding: 8px;
+    max-height: 480px;
+    overflow: auto;
+}
+.promptlib .promptlib-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+}
+.promptlib .promptlib-result {
+    border-top: 1px solid #dcdcde;
+    margin-top: 16px;
+}
+.promptlib .promptlib-add { color: #007017; }
+.promptlib .promptlib-remove { color: #b32d2e; }
+.promptlib .promptlib-issues .promptlib-error { color: #b32d2e; }
+.promptlib .promptlib-issues .promptlib-warning { color: #996800; }
+.promptlib .promptlib-inline { display: inline-block; margin-right: 6px; }
+.promptlib .promptlib-meta,
+.promptlib .promptlib-footer { color: #50575e; }
+@media (max-width: 782px) {
+    .promptlib .promptlib-columns { grid-template-columns: 1fr; }
+}
