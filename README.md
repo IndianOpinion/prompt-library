@@ -36,7 +36,7 @@ composer install --no-dev
 
 `composer install` fetches [llm-json-php](https://github.com/IndianOpinion/llm-json-php), the only runtime dependency, from GitHub (a `vcs` repository entry in `composer.json`). The `vendor/` folder is never committed. Then activate **Prompt Library** in wp-admin.
 
-Without Composer: copy the plugin folder into `wp-content/plugins/` and activate it. The plugin loads its own classes with `bootstrap.php`. Templates, versions, the editor, preview, import, export, WP-CLI and rendering for other plugins all work. The test runner stays off, with a notice, until `composer install` has been run, because every model call goes through llm-json-php.
+Without Composer: copy the plugin folder into `wp-content/plugins/` and activate it. The plugin loads its own classes with `bootstrap.php`. Templates, versions, the editor, preview, import, export, WP-CLI and rendering for other plugins all work. The test runner stays off, with a notice, until `composer install` has been run, because the built-in model gateway goes through llm-json-php. A site that would rather use its own caller can return an object implementing `IndianOpinion\PromptLibrary\Runner\ModelGateway` from the `promptlib_model_gateway` filter; the runner then works without llm-json-php, and the kill switch, caps, lock and spend-meter checks still apply.
 
 Must-use plugin: not supported in 0.1.0. Activation creates tables, capabilities and a cron event, and a must-use plugin never runs activation. Install it as a normal plugin. See decision D6 in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -194,7 +194,7 @@ PHP functions: `promptlib_render()`, `promptlib_get()`, `promptlib_exists()`, `p
 
 Actions: `promptlib_version_published`, `promptlib_live_changed`, `promptlib_template_trashed`, `promptlib_template_restored`, `promptlib_template_deleted`, `promptlib_imported`, `promptlib_run_finished`, `promptlib_log`.
 
-Filters: `promptlib_render`, `promptlib_runner_client`, `promptlib_runner_purpose`, `promptlib_runner_deadline`, `promptlib_daily_caps`, `promptlib_rate_limit`, `promptlib_max_part_bytes`, `promptlib_max_render_bytes`, `promptlib_fixture_limit`, `promptlib_run_retention_days`, `promptlib_store_runs`, `promptlib_role_caps`, `promptlib_estimate_tokens`.
+Filters: `promptlib_render`, `promptlib_model_gateway`, `promptlib_runner_client`, `promptlib_runner_purpose`, `promptlib_runner_deadline`, `promptlib_daily_caps`, `promptlib_rate_limit`, `promptlib_max_part_bytes`, `promptlib_max_render_bytes`, `promptlib_fixture_limit`, `promptlib_run_retention_days`, `promptlib_store_runs`, `promptlib_role_caps`, `promptlib_estimate_tokens`.
 
 REST namespace `prompt-library/v1`: `GET /templates`, `GET /templates/{slug}`, `GET /templates/{slug}/versions/{n}`, `POST /templates/{slug}/versions`, `PUT /templates/{slug}/live`, `POST /templates/{slug}/preview`, `POST /runs`, `GET /runs`. Every route checks a capability.
 

@@ -108,7 +108,12 @@ the pre-spend check before each one. Attempts the library still reports inside
 one call (a guard regeneration, or a site-supplied client with its own chain,
 case 75) are recorded under that call's reservation id. A reservation is
 released when an attempt stops after an allowed check and before its request:
-the deadline guard, or a configuration error with no request made.
+the deadline guard, a configuration error with no request made, or a gateway
+that throws. In compare mode, if the first selection throws, the second
+selection's meter reservation and its run reservation are given back before
+the error reaches the caller. A fallback attempt is also checked against the
+own daily cost cap, counting what the run has already spent. A run row that
+cannot be stored is logged and the paid result is still shown (run id 0).
 
 Binding rules: no `SPEND_METER_API` constant means no meter and no meter
 traffic at all; a constant naming a version other than `1` fails closed
@@ -137,7 +142,9 @@ effect.
 
 One table with a `type` column: `version` rows and event rows (`live`,
 `import`, `trash`, `restore`, `install`). Event rows keep `version_no` NULL so
-the unique key on `(template_id, version_no)` still guards version numbers.
+the unique key on `(template_id, version_no)` still guards version numbers. A live
+event row is written before the pointer moves, so if the history write fails
+the live version stays where it was.
 
 ### D4. llm-json-php (ruling 4)
 
@@ -151,6 +158,15 @@ Version conflicts: on a Composer-managed site, Composer resolves one copy. On
 a site where another plugin loads its own copy first, PHP keeps the first
 classes it loaded; the runner only uses the library's public 0.1 interface,
 and the gateway checks the client class before use.
+
+Caller filter: `promptlib_model_gateway` lets a site return its own
+`Runner\ModelGateway` (one model, one request, never throws for a model
+failure). It is read at call time, so a filter added by a plugin that loads
+later still counts. With it, the runner works without llm-json-php; the kill
+switch, caps, lock, rate and spend-meter steps are unchanged. A gateway that
+throws anyway is caught by the runner, logged, recorded as a failed run, and
+its reservation released. `promptlib_runner_client` stays for sites that
+only want to hand over a configured llm-json-php client.
 
 ### D5. `latest` (ruling 5)
 

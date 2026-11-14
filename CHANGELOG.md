@@ -28,6 +28,8 @@ contract (the `promptlib_*` functions, the value objects, the
 - A test runner with Preview, Run and Compare, fixtures, a daily runs cap, a
   daily cost cap, a kill switch, a per-user lock and rate, and optional
   spend-meter integration with one pre-spend check per attempt.
+- The `promptlib_model_gateway` filter, so a site can plug in its own model
+  caller and run the test runner without llm-json-php.
 - Export and import, a REST API (`prompt-library/v1`) and WP-CLI commands.
 - Site Health tests, a personal data exporter and eraser, and uninstall that
   removes everything the plugin created.
