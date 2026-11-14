@@ -94,6 +94,8 @@ Non-goals:
   cost. Activated as a normal plugin; it does not support running as a
   must-use plugin in 0.1.0 because it creates tables and capabilities on
   activation (see open question 6).
+- **README.** The first section of the repository README carries this exact
+  line: "Written from scratch; not derived from any third-party plugin."
 
 ## 4. Behaviour
 
@@ -388,13 +390,18 @@ message, and every stop after step 4 releases what step 4 reserved.
     When a cost cap is set and the counter has reached it, the run is
     refused. These caps apply even when `spend-meter` is active.
 67. Step 5, `spend-meter` pre-call check, only when that plugin is active.
-    The runner asks it, through the pre-call filter its PRD defines, whether
-    a call for this purpose and model may proceed, passing an estimate of
-    input tokens (rendered characters divided by four, rounded up) and the
-    output token cap. If it refuses, the run stops with its reason. If the
-    filter throws or returns something unrecognised, the run stops (fail
-    closed: a broken meter must not mean unmetered spend), and the error is
-    logged.
+    The runner applies the filter `spend_meter_pre_spend` (section 5.8) with
+    `null` and an intent array naming the purpose, model and provider, an
+    estimate of input tokens (rendered characters divided by four, rounded
+    up) and the output token cap. A `null` result means no meter is present
+    and the run goes on under the own caps. A decision with `allowed` true
+    lets it go on and carries a reservation id. A decision with `allowed`
+    false stops the run with its `reason` code. If the filter throws, or
+    returns anything that is not `null` or an array with a boolean
+    `allowed`, or `allowed` is true with an unknown `reason`, the run stops
+    (fail closed: a broken meter must not mean unmetered spend), and the
+    error is logged. Any stop after this step releases the reservation
+    (section 5.8).
 68. Step 6, the call. One `llm-json-php` request with: purpose label
     `prompt-test` (filterable), the rendered system part as the system
     instruction, the rendered user part as the input, the schema from case
@@ -403,10 +410,10 @@ message, and every stop after step 4 releases what step 4 reserved.
     minus 10 seconds when that limit is set), WordPress HTTP transport and
     the transient store.
 69. Step 7, report. Every attempt the library reports, successful or not,
-    is passed to `spend-meter`'s record action when that plugin is active,
-    with purpose, model, provider, token counts, cost and cost source,
-    because failed attempts are billed too. A listener that throws does not
-    break the run; the error is logged.
+    is passed to the action `spend_meter_record` (section 5.8) when that
+    plugin is active, with the reservation id, status, token counts and
+    billed cost in nanos, because failed attempts are billed too. A listener
+    that throws does not break the run; the error is logged.
 70. Step 8, settle. The known cost of all attempts is added to the own
     cost counter. Unknown cost adds nothing and the run row says
     "cost unknown". The reservation from step 4 is kept (the run happened).
@@ -671,6 +678,57 @@ code printed.
 | `PROMPTLIB_ALLOW_SITE_KEY` | Multisite: allow a site key to override the constant. |
 | `PROMPTLIB_KEEP_DATA_ON_UNINSTALL` | true keeps all data on uninstall. |
 
+### 5.8 Spend-meter adapter
+
+All contact with `spend-meter` lives in one adapter class, so a rename in
+its contract touches one file. Names and shapes below are taken from its
+published PRD (contract version `1`, constant `SPEND_METER_API`). The
+adapter reads that constant and refuses to bind to a version it does not
+know.
+
+Pre-call check (case 67): `apply_filters( 'spend_meter_pre_spend', null,
+array $intent ): ?array`.
+
+- Intent keys sent: `purpose` (the run purpose, case 68), `caller` (the
+  plugin slug `prompt-library`), `provider`, `model`, `est_input_tokens`
+  (int), `max_output_tokens` (int). `test` and `dry_run` are never set,
+  because a run is real spend. `meta` may carry `template` (the slug) and
+  `version`, and no prompt text.
+- Decision keys read: `allowed` (bool), `reason` (string), `message` (log
+  only, never shown as the user-facing text), `reservation_id` (string or
+  null), `estimate` (int nanos), `remaining` (int nanos or null), `api`
+  (int).
+- Reason codes the screen maps to plain language: `kill_switch`,
+  `kill_switch_purpose`, `unpriced_model`, the six `cap_*` codes,
+  `ledger_unavailable`, `denied_by_filter`, `decision_filter_error`,
+  `invalid_request`. Any other code is shown as "refused by the spend
+  meter" with the code in the log, and counts as a deny.
+
+Release: `do_action( 'spend_meter_release', string $reservation_id )`.
+Fired when the run stops after an allowed check and before any call is
+made (for example the deadline guard or a library load failure). Releasing
+an unknown or settled reservation is a no-op on its side.
+
+Record (case 69): `do_action( 'spend_meter_record', array $call )`.
+
+- Call keys sent: `reservation_id` (from the decision), `call_id` (a UUID
+  per attempt, for idempotency), `purpose`, `caller`, `provider`, `model`,
+  `status` (`ok`, `error_billed` or `error_unbilled`), `input_tokens`,
+  `cached_input_tokens`, `output_tokens`, `reasoning_tokens` (ints, 0 when
+  unknown), `provider_cost` (int nanos, only when the provider reported
+  it), `http_status`, `error_code` (up to 64 characters), `latency_ms`,
+  `attempt` (1-based), `fallback_from` (the model first tried, when a
+  fallback answered).
+- Every attempt of one run uses the same `reservation_id`; its meter links
+  the later rows to the first. An attempt with no usable usage numbers is
+  still recorded with zero tokens.
+- When no reservation exists (the meter was activated mid-run), the call
+  array carries `purpose`, `caller`, `provider` and `model` so the meter
+  can write an unreserved row.
+
+The adapter treats the meter's own `remaining` value as advice for the
+run screen and never as a replacement for the own caps (case 66).
+
 ## 6. Data
 
 - **Post type** (the plugin's own name, at most 20 characters): one post
@@ -894,12 +952,16 @@ test install in CI if the builder adds one.
 54. (66) The cap stops the 51st run; two concurrent runs at 49 both
     succeed and a third fails; the cost cap stops a run once reached; caps
     apply with a fake `spend-meter` present.
-55. (67) A fake meter that refuses stops the run and releases the
-    reservation; one that throws stops the run (fail closed).
+55. (67) A fake meter that returns `null` lets the run go on under the own
+    caps; one that refuses stops the run with its reason code; one that
+    throws, or returns a malformed decision, stops the run (fail closed);
+    a stop after an allowed check fires `spend_meter_release` with the
+    reservation id (section 5.8).
 56. (68) The request carries the purpose, parts, schema, cap, temperature
     and a deadline clamped to the PHP time limit.
 57. (69) Each attempt, including failed ones, reaches the fake meter's
-    record action; a throwing listener does not break the run.
+    record action with the keys in section 5.8, all under one reservation id;
+    a throwing listener does not break the run.
 58. (70) Known cost is added; unknown cost adds nothing and is labelled.
 59. (71, 72) Success and each failure class write one run row with the
     right status and show the right message.
@@ -941,11 +1003,14 @@ test install in CI if the builder adds one.
 
 For the builder to answer in `docs/ARCHITECTURE.md`:
 
-1. `spend-meter` interface binding. Its PRD is written in the same batch.
-   Bind the pre-call check (case 67) and the per-attempt record (case 69)
-   to the names its merged PRD defines, inside one adapter class, so a
-   later rename touches one file. If its PRD has no pre-call veto, record
-   that and keep the own caps as the only gate.
+1. `spend-meter` interface binding. Its published PRD defines the filter
+   `spend_meter_pre_spend` (intent in, decision array out, `null` when
+   absent), the action `spend_meter_record` (call array), and the action
+   `spend_meter_release` (reservation id); section 5.8 lists the keys. Build
+   the one adapter class from those names. Confirm against the merged
+   release before 0.1.0 and record any difference. Also decide whether the
+   fallback attempts of one run should share the reservation id as
+   specified, or carry their own `call_id` only.
 2. Day boundary: UTC (this PRD) or the site timezone. Align with
    `spend-meter` if it chose otherwise, and record the choice.
 3. History storage: a separate table or a type column on the versions
