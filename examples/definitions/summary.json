@@ -1,0 +1,16 @@
+{
+    "format": "prompt-library/1",
+    "slug": "example-summary",
+    "title": "Example summary",
+    "description": "A neutral example: summarise a text in a few points.",
+    "system": "You summarise texts accurately. Use only facts stated in the text.",
+    "user": "Summarise the text below in {{ points }} short points.\nTitle: {{ title }}\n\n{{ text }}\n\nAnswer as a JSON object like {\"points\": [\"...\"]}.",
+    "variables": [
+        {"name": "title", "type": "string", "escape": "line", "max_length": 300, "description": "The text's title."},
+        {"name": "text", "type": "text", "escape": "fenced", "max_length": 20000, "description": "The text to summarise."},
+        {"name": "points", "type": "integer", "required": false, "default": 3, "description": "How many points."}
+    ],
+    "output": {"mode": "text"},
+    "settings": {"temperature": null, "token_cap": 600},
+    "note": "Example wording."
+}
