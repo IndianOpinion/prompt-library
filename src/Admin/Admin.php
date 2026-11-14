@@ -108,7 +108,7 @@ final class Admin
                 implode(', ', Schema::storedMissing())
             )));
         }
-        if (!class_exists(\IndianOpinion\LlmJson\Client::class)) {
+        if (!$this->plugin->runner->gateway()->available()) {
             printf('<div class="notice notice-warning"><p>%s</p></div>', esc_html('Prompt library: the llm-json-php library is not installed, so the test runner is off. Run composer install in the plugin folder. Rendering for other plugins keeps working.'));
         }
         if (Settings::load()->isCorrupt() && current_user_can(Capabilities::MANAGE)) {

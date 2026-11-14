@@ -76,8 +76,8 @@ final class SiteHealth
     {
         $settings = Settings::load();
         $checks = [];
-        $libraryPresent = class_exists(\IndianOpinion\LlmJson\Client::class);
-        $checks[] = ['id' => 'library', 'label' => 'Model library', 'status' => $libraryPresent ? 'good' : 'recommended', 'detail' => $libraryPresent ? 'llm-json-php is loaded.' : 'llm-json-php is missing; run composer install in the plugin folder. Rendering still works.'];
+        $libraryPresent = $this->plugin->runner->gateway()->available();
+        $checks[] = ['id' => 'library', 'label' => 'Model library', 'status' => $libraryPresent ? 'good' : 'recommended', 'detail' => $libraryPresent ? 'The model gateway is available.' : 'llm-json-php is missing; run composer install in the plugin folder. Rendering still works.'];
         $configured = Settings::hasProviderKey() && $settings->models() !== [];
         $checks[] = ['id' => 'provider', 'label' => 'Provider', 'status' => $configured ? 'good' : 'recommended', 'detail' => $configured ? 'A provider key and at least one model are configured.' : 'No provider key or no model is configured; the test runner is off.'];
         $missing = Schema::storedMissing();

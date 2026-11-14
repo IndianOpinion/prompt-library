@@ -499,4 +499,77 @@ final class RunnerTest extends TestCase
         add_filter('promptlib_estimate_tokens', static fn (int $estimate, int $chars): int => $chars, 10, 2);
         self::assertSame($chars, \IndianOpinion\PromptLibrary\Runner\Runner::estimateTokens($rendered));
     }
+
+    public function testAThrowingGatewayIsRecordedAsFailedAndReleasesTheReservation(): void
+    {
+        $this->meter(static fn ($n, array $intent): array => ['allowed' => true, 'reason' => 'ok', 'reservation_id' => 'res-t'], $records, $released);
+        $this->gateway->queue[] = static function (): never {
+            throw new \RuntimeException('transport exploded');
+        };
+        $run = $this->go()['runs'][0];
+        self::assertSame('failed', $run['status']);
+        self::assertSame('No route answered: every attempt failed.', $run['message']);
+        self::assertSame(['res-t'], $released);
+        self::assertSame('failed', $this->plugin->runs->recent(null)[0]['status']);
+        self::assertSame(1, $this->today(CounterRepository::RUNS));
+    }
+
+    public function testCompareReleasesTheSecondReservationWhenTheFirstThrows(): void
+    {
+        $n = 0;
+        $this->meter(static function () use (&$n): array {
+            $n++;
+            return ['allowed' => true, 'reason' => 'ok', 'reservation_id' => 'cmp-' . $n];
+        }, $records, $released);
+        add_action('promptlib_run_finished', static function (): void {
+            throw new \LogicException('listener broke');
+        });
+        try {
+            $this->go([['version' => 1, 'model' => 'test/model'], ['version' => 1, 'model' => 'test/other']]);
+            self::fail('Expected the listener error to reach the caller.');
+        } catch (\LogicException $e) {
+            self::assertSame('listener broke', $e->getMessage());
+        }
+        self::assertSame(['cmp-2'], $released);
+        self::assertCount(1, $this->gateway->calls);
+        self::assertSame(1, $this->today(CounterRepository::RUNS));
+        self::assertFalse(get_option(RunGuard::lockName(self::ADMIN), false));
+    }
+
+    public function testAPaidRunIsShownWhenItsRowCannotBeStored(): void
+    {
+        global $wpdb;
+        $wpdb->failOnce['insert.promptlib_runs'] = 'Disk full';
+        $this->gateway->queue[] = FakeGateway::ok(['answer' => 'Paid for.']);
+        $run = $this->go()['runs'][0];
+        self::assertSame('ok', $run['status']);
+        self::assertSame('Paid for.', $run['answer']);
+        self::assertSame(0, $run['run_id']);
+        self::assertSame(2000, $this->today(CounterRepository::COST));
+    }
+
+    public function testFallbackStopsAtTheCostCap(): void
+    {
+        $settings = get_option(Settings::OPTION);
+        $settings['fallback_models'] = ['test/other'];
+        $settings['daily_cost'] = 0.000001;
+        update_option(Settings::OPTION, $settings, false);
+        $this->gateway->queue[] = FakeGateway::fail('no_route', true, 'test/model');
+        $run = $this->go()['runs'][0];
+        self::assertSame('failed', $run['status']);
+        self::assertCount(1, $this->gateway->calls);
+        self::assertStringStartsWith('cap:', (string) $run['error_code']);
+    }
+
+    public function testASiteSuppliedGatewayReplacesTheLibrary(): void
+    {
+        $this->gateway->available = false;
+        self::assertSame('promptlib_not_configured', $this->plugin->runner->disabledReason()['code'] ?? null);
+        $own = new FakeGateway();
+        $own->queue[] = FakeGateway::ok(['answer' => 'From my own caller.']);
+        add_filter('promptlib_model_gateway', static fn () => $own);
+        self::assertNull($this->plugin->runner->disabledReason());
+        self::assertSame('From my own caller.', $this->go()['runs'][0]['answer']);
+        self::assertSame([], $this->gateway->calls);
+    }
 }

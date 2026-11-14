@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace IndianOpinion\PromptLibrary\Runner;
 
 use IndianOpinion\PromptLibrary\Exception\PromptLibraryException;
+use IndianOpinion\PromptLibrary\Exception\StorageException;
 use IndianOpinion\PromptLibrary\RenderedPrompt;
 use IndianOpinion\PromptLibrary\Renderer;
 use IndianOpinion\PromptLibrary\Text;
@@ -72,7 +73,7 @@ class Runner
         if (Schema::isDegraded()) {
             return ['code' => 'promptlib_runner_disabled', 'message' => 'The plugin tables are missing columns, so the test runner is off. See Site Health.'];
         }
-        if (!$this->gateway->available()) {
+        if (!$this->gateway()->available()) {
             return ['code' => 'promptlib_not_configured', 'message' => 'The model library is not installed. Run composer install in the plugin folder.'];
         }
         if ($settings->models() === []) {
@@ -83,6 +84,18 @@ class Runner
         }
 
         return null;
+    }
+
+    /**
+     * The gateway in use: one a site supplies through promptlib_model_gateway
+     * (so the runner can work without llm-json-php), or the built-in one.
+     * Resolved at call time, so a filter added after this plugin loaded counts.
+     */
+    public function gateway(): ModelGateway
+    {
+        $supplied = apply_filters('promptlib_model_gateway', null);
+
+        return $supplied instanceof ModelGateway ? $supplied : $this->gateway;
     }
 
     /**
@@ -177,8 +190,20 @@ class Runner
             $group = $count > 1 ? wp_generate_uuid4() : '';
             $start = microtime(true);
             $results = [];
+            $costCapNanos = $caps['cost'] > 0 ? (int) round($caps['cost'] * 1e9) : 0;
             foreach ($prepared as $index => $item) {
-                $results[] = $this->execute($templateId, $slug, $item['selection'], $item['rendered'], $decisions[$index], $settings, $group, $userId, $day, $start, $deadline);
+                try {
+                    $results[] = $this->execute($templateId, $slug, $item['selection'], $item['rendered'], $decisions[$index], $settings, $group, $userId, $day, $start, $deadline, $costCapNanos);
+                } catch (\Throwable $e) {
+                    // Give back what the selections not yet made had reserved.
+                    for ($later = $index + 1; $later < $count; $later++) {
+                        $this->meter->release($decisions[$later]['reservation_id']);
+                    }
+                    if ($count - $index - 1 > 0) {
+                        $this->counters->release($day, CounterRepository::RUNS, $count - $index - 1);
+                    }
+                    throw $e;
+                }
             }
         } finally {
             $this->guard->release($userId);
@@ -195,7 +220,7 @@ class Runner
      * @param array{allowed: bool, metered: bool, reason: string, message: string, reservation_id: ?string, remaining: ?int, estimate: ?int} $decision
      * @return array<string, mixed>
      */
-    private function execute(int $templateId, string $slug, array $selection, RenderedPrompt $rendered, array $decision, Settings $settings, string $group, int $userId, string $day, float $start, float $deadline): array
+    private function execute(int $templateId, string $slug, array $selection, RenderedPrompt $rendered, array $decision, Settings $settings, string $group, int $userId, string $day, float $start, float $deadline, int $costCapNanos = 0): array
     {
         $purpose = (string) apply_filters('promptlib_runner_purpose', self::PURPOSE, $slug);
         $output = $rendered->output();
@@ -211,8 +236,16 @@ class Runner
         $failure = null;
         $attemptNumber = 0;
         $callStart = microtime(true);
+        $gateway = $this->gateway();
         foreach ($routes as $i => $model) {
             if ($i > 0) {
+                // A fallback attempt is checked against the own cost cap first,
+                // counting what this run has already spent.
+                if ($costCapNanos > 0 && $this->counters->get($day, CounterRepository::COST) + self::knownNanos($reports) >= $costCapNanos) {
+                    $this->counters->add($day, CounterRepository::REFUSED_PREFIX . 'promptlib_cap_reached', 1);
+                    $failure = ['kind' => 'cap', 'class' => 'cap:cost', 'message' => "Today's cost cap is reached, so no fallback model was tried."];
+                    break;
+                }
                 $decision = $this->meter->preSpend($this->intent($settings, $model, $rendered, $slug, $selection['version']));
                 if (!$decision['allowed']) {
                     $this->counters->add($day, CounterRepository::REFUSED_PREFIX . 'promptlib_meter_refused', 1);
@@ -226,18 +259,25 @@ class Runner
                 $failure = ['kind' => 'deadline', 'class' => 'deadline_guard', 'message' => self::MESSAGES['deadline']];
                 break;
             }
-            $response = $this->gateway->call(new GatewayCall(
-                $purpose,
-                $provider,
-                $model,
-                $rendered->system(),
-                $rendered->user(),
-                $json ? 'output' : 'answer',
-                $schema,
-                $temperature,
-                $tokenCap,
-                $remaining,
-            ));
+            try {
+                $response = $gateway->call(new GatewayCall(
+                    $purpose,
+                    $provider,
+                    $model,
+                    $rendered->system(),
+                    $rendered->user(),
+                    $json ? 'output' : 'answer',
+                    $schema,
+                    $temperature,
+                    $tokenCap,
+                    $remaining,
+                ));
+            } catch (\Throwable $e) {
+                // A gateway must not throw, but a site-supplied one may. Steps 7
+                // to 9 still run (case 72); nothing was reported, so release.
+                $this->logger->error('The model gateway threw; the run is recorded as failed.', ['error' => get_class($e) . ': ' . $e->getMessage()]);
+                $response = GatewayResponse::failure('no_route', 'gateway_error', '', [], false);
+            }
             if ($response->attempts === []) {
                 $this->meter->release($decision['reservation_id']);
             }
@@ -307,7 +347,7 @@ class Runner
             'model' => $selection['model'],
             'provider' => $provider,
             'status' => $ok ? 'ok' : 'failed',
-            'error_code' => $ok ? '' : substr($failure['kind'] . ':' . $failure['class'], 0, 64),
+            'error_code' => $ok || $failure === null ? '' : substr($failure['kind'] . ':' . $failure['class'], 0, 64),
             'prompt_tokens' => $promptTokens,
             'completion_tokens' => $completionTokens,
             'cost_nanos' => $costSource === 'unknown' ? null : $known,
@@ -320,7 +360,13 @@ class Runner
             'compare_group' => $group,
             'created_at' => $this->clock->nowUtc(),
         ];
-        $runId = $this->runs->insert($row);
+        try {
+            $runId = $this->runs->insert($row);
+        } catch (StorageException $e) {
+            // The call happened and was paid for: show its result anyway.
+            $this->logger->error('The run row could not be stored.', ['error' => $e->getMessage(), 'slug' => $slug, 'user_id' => $userId]);
+            $runId = 0;
+        }
         $row['id'] = $runId;
         $public = $row;
         unset($public['system_text'], $public['user_text'], $public['answer']);
@@ -345,7 +391,7 @@ class Runner
             'model' => $selection['model'],
             'answered_by' => $ok && $reports !== [] ? $reports[count($reports) - 1]->model : null,
             'status' => $ok ? 'ok' : 'failed',
-            'message' => $ok ? '' : $failure['message'],
+            'message' => $ok || $failure === null ? '' : $failure['message'],
             'error_code' => $row['error_code'],
             'system' => $rendered->system(),
             'user' => $rendered->user(),
@@ -454,6 +500,17 @@ class Runner
             'required' => ['answer'],
             'additionalProperties' => false,
         ];
+    }
+
+    /** @param list<AttemptReport> $reports */
+    private static function knownNanos(array $reports): int
+    {
+        $known = 0;
+        foreach ($reports as $report) {
+            $known += $report->costNanos() ?? 0;
+        }
+
+        return $known;
     }
 
     /** @param list<string> $sources */
