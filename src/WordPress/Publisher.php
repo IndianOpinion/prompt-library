@@ -122,8 +122,10 @@ class Publisher
     private function movePointer(int $id, string $slug, int $to, string $reason, int $userId): void
     {
         $from = $this->templates->live($id);
-        $this->templates->setLive($id, $to);
+        // History first: if it cannot be written, the pointer has not moved,
+        // so the live version never changes without a record of who and why.
         $this->versions->insertEvent($id, $slug, 'live', $from > 0 ? $from : null, $to, $reason, $userId, $this->clock->nowUtc());
+        $this->templates->setLive($id, $to);
         do_action('promptlib_live_changed', $id, $slug, $from > 0 ? $from : null, $to, $userId);
         $this->logger->info('Live version changed.', ['template_id' => $id, 'slug' => $slug, 'from' => $from, 'to' => $to, 'user_id' => $userId]);
     }

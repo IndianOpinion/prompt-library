@@ -120,10 +120,11 @@ class ImportExport
                 throw new RequestException('promptlib_conflict', 'A version number was taken during the import.', 409);
             }
         }
+        // History before the pointer, as in Publisher: no live version without a record.
+        $this->versions->insertEvent($id, $slug, 'import', null, $live > 0 ? $live : null, sprintf('Created by import with %d versions.', count($checked)), $userId, $this->clock->nowUtc());
         if ($live > 0) {
             $this->templates->setLive($id, $live);
         }
-        $this->versions->insertEvent($id, $slug, 'import', null, $live > 0 ? $live : null, sprintf('Created by import with %d versions.', count($checked)), $userId, $this->clock->nowUtc());
         do_action('promptlib_imported', $slug, 'created');
         $this->logger->info('Template created by import.', ['slug' => $slug, 'versions' => count($checked), 'user_id' => $userId]);
 

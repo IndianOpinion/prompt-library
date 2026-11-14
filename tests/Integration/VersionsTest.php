@@ -118,6 +118,22 @@ final class VersionsTest extends TestCase
         self::assertSame([$id, 'summary', 2, 1, self::EDITOR], end($changed)[1]);
     }
 
+    public function testLiveDoesNotMoveWhenItsHistoryCannotBeWritten(): void
+    {
+        $id = $this->publishedTemplate();
+        $this->plugin->drafts->save($id, ['system' => 'Second.'] + $this->plugin->templates->draft($id), null, self::ADMIN);
+        $this->plugin->publisher->publish($id, 'Second.', false, false, self::ADMIN);
+        global $wpdb;
+        $wpdb->failOnce['insert.promptlib_versions'] = 'Disk full';
+        try {
+            $this->plugin->publisher->setLive($id, 2, 'Try it.', true, self::ADMIN);
+            self::fail('Expected a storage exception.');
+        } catch (\IndianOpinion\PromptLibrary\Exception\StorageException $e) {
+            self::assertStringContainsString('Disk full', $e->getMessage());
+        }
+        self::assertSame(1, $this->plugin->templates->live($id));
+    }
+
     /** Acceptance test 36 (case 44). */
     public function testNoCodePathUpdatesAVersion(): void
     {
