@@ -237,6 +237,10 @@ wp prompt-library set-live <slug> <n> [--reason=<text>]
 
 **Is personal data stored?** Run rows may hold values typed into the runner. They are visible to their author and to administrators, kept 30 days, and covered by the personal data exporter and eraser. Switch off "Store prompt text and answers" to keep metadata only.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Licence
 
 MIT. See [LICENSE](LICENSE). Copyright (c) 2026 Indian Opinion.
